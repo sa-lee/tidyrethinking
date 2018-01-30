@@ -1,0 +1,116 @@
+---
+title: "Small Worlds and Large Worlds"
+author: "Stuart Lee"
+date: "30/01/2018"
+output: md_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+> All statistical modelling has these sames two frames: the _small world_ of the
+model itselt and the _large world_ we hope to deploy the model in.
+
+* small world = the logic and assumptions of the model
+* large world = the broad context of the deployed model, the model is never a 
+full representation of the large world
+
+Baysian inference is counting and comparing possibilities.
+
+## Example: marbles in a bag
+
+Here's some code to create the possible conjectures for the bag of 4 marbles
+containing some combination of black and white marbles.
+```{r}
+white_marble <- "\U25EF"
+black_marble <- "\U25C9"
+observed <- c(black_marble, white_marble, black_marble)
+
+layout_bag <- function(p, n_marbles = 4) {
+  stopifnot(!(p - n_marbles > 1))
+  n_black <- min(p, n_marbles + 1) - 1
+  n_white <- n_marbles - n_black
+  c(rep(black_marble, n_black), rep(white_marble, n_white))
+}
+
+conjecture <- tibble(possibility = 1:5,
+                     bag = map(possibility, layout_bag),
+                     elegant_bag = map_chr(bag, ~ str_c(.x, collapse = "")))
+conjecture
+```
+
+We observe the following sequence of marbles from the bag:
+`r str_c(observed, collapse = "")`.  
+
+There are `r length(conjecture$elegant_bag[[1]]) ^ length(observed)` possible
+ways of choosing these 3 marbles from the bag. 
+
+Now for each conjecture we can count
+the number of ways of producing `r str_c(observed, collapse = "")`.
+
+```{r}
+number_of_ways <- function(observed, bag) {
+  if (!all(observed %in% bag)) return(0L)
+  counter <- 1L
+  for (i in seq_along(observed)) {
+    counter <- counter * sum(bag %in% observed[i])
+  }
+  counter
+}
+conjecture <- conjecture %>% 
+  mutate(n_ways = map_int(bag, ~number_of_ways(observed, .x)))
+conjecture
+```
+
+We have supposed that each conjecture is equally plausible, so if we observed
+another `r black_marble` we could simply include add this to `r str_c(observed, collapse = "")` and rerun the `number_of_ways` function.
+
+```{r}
+conjecture %>%
+  mutate(new_count = map_int(bag, 
+                             ~number_of_ways(c(observed, black_marble), .x)))
+```
+
+Alternately, we could use our previously computed counts as a prior and multiply
+it by the number of ways to produce `r black_marble` for each possible bag.
+
+```{r}
+conjecture <- conjecture %>%
+  mutate(n_ways_new_obs = map_int(bag, ~sum(.x %in% black_marble)),
+         new_count = n_ways * n_ways_new_obs)
+conjecture 
+```
+
+What if we were told by the marble factory that black marbles are rare,
+then for every `r conjecture$elegant_bag[4]` there are two `r conjecture$elegant_bag[3]` and three `r conjecture$elegant_bag[2]`. Then we can 
+update our counts using the same logic as before:
+```{r}
+conjecture <- conjecture %>%
+  select(-new_count) %>%
+  mutate(factory_count = c(0L, 3L:1L, 0L),
+         new_count = n_ways*n_ways_new_obs*factory_count)
+conjecture
+```
+
+From counts to probability, the mantra of Bayes:
+
+posterior `r "\U221D"` likelihodd * prior
+
+In the marbles example this means the plausibility of a bag given 
+the observed sequence `r str_c(observed, collapse = "")` depends on
+the ways a bag can produce `r str_c(observed, collapse = "")` multiplied
+by the prior plausibility of the bag.
+
+
+```{r}
+conjecture_probs <- conjecture %>%
+  mutate(proportion_black_marble = n_ways_new_obs / max(n_ways_new_obs),
+    posterior_observed = n_ways / sum(n_ways)) %>%
+  select(elegant_bag, proportion_black_marble, n_ways,  posterior_observed)
+conjecture_probs
+```
+
+## Building a Model
+
